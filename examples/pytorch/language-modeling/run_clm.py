@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import datasets
+import onnx
+import torch
 from datasets import load_dataset
 
 import transformers
@@ -48,7 +50,12 @@ from transformers.testing_utils import CaptureLogger
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
+from transformers.trainer import get_train_dataloader_for_init
 
+from nncf import NNCFConfig
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.config.structures import BNAdaptationInitArgs
+from nncf.torch.initialization import PTInitializingDataLoader
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
@@ -334,21 +341,7 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
-    if model_args.model_name_or_path:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            use_auth_token=True if model_args.use_auth_token else None,
-        )
-    else:
-        model = AutoModelForCausalLM.from_config(config)
-        n_params = sum(dict((p.data_ptr(), p.numel()) for p in model.parameters()).values())
-        logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
-    model.resize_token_embeddings(len(tokenizer))
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -444,6 +437,59 @@ def main():
         if data_args.max_eval_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
+    nncf_config = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+        if training_args.do_train:
+            train_dataloader = get_train_dataloader_for_init(training_args, train_dataset,
+                                                             default_data_collator)
+
+            class WikitextInitializingDataLoader(PTInitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), dataloader_output
+
+            nncf_config.register_extra_structs([
+                QuantizationRangeInitArgs(WikitextInitializingDataLoader(train_dataloader)),
+                BNAdaptationInitArgs(WikitextInitializingDataLoader(train_dataloader)),
+            ])
+
+    if model_args.model_name_or_path:
+        retval = AutoModelForCausalLM.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            nncf_config=nncf_config,
+            nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
+        )
+    else:
+        retval = AutoModelForCausalLM.from_config(config)
+        n_params = sum(dict((p.data_ptr(), p.numel()) for p in retval.parameters()).values())
+        logger.info(f"Training new model from scratch - Total size={n_params / 2 ** 20:.2f}M params")
+
+
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+
+    model.resize_token_embeddings(len(tokenizer))
+
+    if training_args.to_onnx:
+        if nncf_config is not None:
+           compression_ctrl.export_model(training_args.to_onnx)
+        else:
+           model.to('cpu')
+           dummy_tensor = torch.ones([1, config.n_positions], dtype=torch.long)
+           onnx.export(model, dummy_tensor, training_args.to_onnx)
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -453,6 +499,7 @@ def main():
         tokenizer=tokenizer,
         # Data collator will default to DataCollatorWithPadding, so we change it.
         data_collator=default_data_collator,
+        compression_ctrl=compression_ctrl
     )
 
     # Training

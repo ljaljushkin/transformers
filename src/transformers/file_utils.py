@@ -244,6 +244,7 @@ SESSION_ID = uuid4().hex
 DISABLE_TELEMETRY = os.getenv("DISABLE_TELEMETRY", False) in ENV_VARS_TRUE_VALUES
 
 WEIGHTS_NAME = "pytorch_model.bin"
+NNCF_PT_STATE_NAME = "nncf_state.bin"
 TF2_WEIGHTS_NAME = "tf_model.h5"
 TF_WEIGHTS_NAME = "model.ckpt"
 FLAX_WEIGHTS_NAME = "flax_model.msgpack"
