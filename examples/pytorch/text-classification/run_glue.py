@@ -702,14 +702,14 @@ def main():
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            compression_ctrl.export_model(training_args.to_onnx, save_format='onnx_11')
         else:
             model.to('cpu')
             import torch
             from torch import onnx
             dummy_tensor = torch.ones([1, 128], dtype=torch.long)
-            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor),
-                        training_args.to_onnx, opset_version=10)
+            onnx.export(model, (dummy_tensor, dummy_tensor),
+                        training_args.to_onnx, opset_version=11)
 
     if training_args.do_predict or data_args.task_name is not None or data_args.test_file is not None:
         if "test" not in raw_datasets and "test_matched" not in raw_datasets:
