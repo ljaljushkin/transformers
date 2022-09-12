@@ -1359,8 +1359,12 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 raise
         elif from_pt:
             if nncf_config is not None and nncf_eval:
-                compression_algo_controller, model = create_compressed_model(model, nncf_config,
-                                                                             compression_state=state_dict)
+                # TODO: if eval in PTQ mode:
+                model.load_state_dict(state_dict, strict=False)
+                compression_algo_controller, model = create_compressed_model(model, nncf_config)
+                # TODO: if eval of NNCF checkpoint
+                # compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                #                                                              compression_state=state_dict)
                 return compression_algo_controller, model
 
             model, missing_keys, unexpected_keys, mismatched_keys, error_msgs = cls._load_state_dict_into_model(

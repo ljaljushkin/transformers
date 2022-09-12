@@ -1,0 +1,83 @@
+{
+  "input_info": [
+    {
+      "keyword": "input_ids",
+      "sample_size": [
+        1,
+        128
+      ],
+      "type": "long",
+      "filler": "ones"
+    },
+    {
+      "keyword": "attention_mask",
+      "sample_size": [
+        1,
+        128
+      ],
+      "type": "long",
+      "filler": "ones"
+    }
+  ],
+  "compression": {
+    "algorithm": "quantization",
+    "preset": "mixed",
+    "initializer": {
+      "range": {
+        "num_init_samples": 300,
+        "type": "mean_min_max"
+      },
+      "batchnorm_adaptation": {
+        "num_bn_adaptation_samples": 300
+      }
+    },
+    "ignored_scopes": [
+      // Original ignored scope from the patch - DOES NOT WORK and seems like not needed
+//      "{re}BertSelfAttention\\[self\\]/__add___0",
+//      "RobertaForSequenceClassification/RobertaClassificationHead[classifier]/Linear[out_proj]",
+//      "RobertaForSequenceClassification/RobertaClassificationHead[classifier]/Linear[dense]",
+
+//      Ingnored scopes - first version
+      // Ignore Everything before 1st MHSA
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/NNCFEmbedding[word_embeddings]/embedding_0",
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/NNCFEmbedding[position_embeddings]/embedding_0",
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/NNCFEmbedding[token_type_embeddings]/embedding_0",
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/__add___2",
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/__iadd___0",
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/LayerNorm[LayerNorm]/layer_norm_0",
+//      // After LayerNorm, Before Dropout/MHSA
+//      //22 RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/LayerNorm[LayerNorm]/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEmbeddings[embeddings]/LayerNorm[LayerNorm]/layer_norm_0",
+//
+//      // Input and weights of Matmul KV x V
+//      // 34 RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfAttention[self]/NNCFLinear[value]/AsymmetricQuantizer/asymmetric_quantize_0
+//      // 45 RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfAttention[self]/Softmax/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfAttention[self]/matmul_1",
+//
+//      // 42 RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfAttention[self]/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfAttention[self]/__add___0",
+//
+//      // Before Add (After Softmax and after Wo)
+//      // 54 RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfOutput[output]/NNCFLinear[dense]/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfOutput[output]/__add___0",
+//
+//      //FFN (Before LayerNorm, Before Add)
+//      // 57  RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaS elfOutput[output]/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaAttention[attention]/RobertaSelfOutput[output]/LayerNorm[LayerNorm]/layer_norm_0",
+//      // 66  RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaOutput[output]/NNCFLinear[d ense]/AsymmetricQuantizer/asymmetric_quantize_0
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaOutput[output]/__add___0",
+//      // 69  RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaOutput[output]/AsymmetricQ uantizer/asymmetric_quantize_0,
+//      "RobertaForSequenceClassification/RobertaModel[roberta]/RobertaEncoder[encoder]/ModuleList[layer]/RobertaLayer[0]/RobertaOutput[output]/LayerNorm[LayerNorm]/layer_norm_0",
+
+      // Second version
+        "{re}.*RobertaEmbeddings.*",
+        "{re}.*RobertaSelfAttention\\[self\\]/matmul_1",
+        "{re}.*RobertaSelfAttention\\[self\\]/__add___0",
+        "{re}.*RobertaSelfOutput\\[output\\]/__add___0",
+        "{re}.*RobertaSelfOutput\\[output\\]/__add___0",
+        "{re}.*RobertaSelfOutput\\[output\\]/LayerNorm\\[LayerNorm\\]/layer_norm_0",
+        "{re}.*RobertaOutput\\[output\\]/__add___0",
+        "{re}.*RobertaOutput\\[output\\]/LayerNorm\\[LayerNorm\\]/layer_norm_0"
+    ]
+  }
+}
