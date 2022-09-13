@@ -42,6 +42,7 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+from transformers.trainer import get_eval_dataloader_for_init
 from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
@@ -558,6 +559,9 @@ def main():
 
     nncf_config = None
     if training_args.nncf_config is not None:
+        class SquadInitializingDataloader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), dataloader_output
         nncf_config = NNCFConfig.from_json(training_args.nncf_config)
         if nncf_config.get("log_dir") is None:
             nncf_config["log_dir"] = training_args.output_dir
@@ -565,14 +569,15 @@ def main():
             os.makedirs(nncf_config["log_dir"])
         if training_args.do_train:
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
-            class SquadInitializingDataloader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), dataloader_output
-
             nncf_config.register_extra_structs([
                 QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
+        if training_args.do_eval:  # TODO: PTQ eval
+            eval_dataloader = get_eval_dataloader_for_init(eval_dataset, training_args, data_collator)
+            initializing_data_loader = SquadInitializingDataloader(eval_dataloader)
+            nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader),
+                                                BNAdaptationInitArgs(initializing_data_loader)])
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,

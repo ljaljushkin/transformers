@@ -1,0 +1,48 @@
+{
+  "input_info": [
+    {
+      "sample_size": [
+        1,
+        384
+      ],
+      "type": "long"
+    },
+    {
+      "sample_size": [
+        1,
+        384
+      ],
+      "type": "long"
+    },
+    {
+      "sample_size": [
+        1,
+        384
+      ],
+      "type": "long"
+    }
+  ],
+  "compression": {
+    "algorithm": "quantization",
+    "preset": "mixed",
+    "initializer": {
+      "range": {
+        "num_init_samples": 1,
+        "type": "mean_min_max"
+      },
+      "batchnorm_adaptation": {
+        "num_bn_adaptation_samples": 0
+      }
+    },
+    "ignored_scopes": [
+      "{re}.*Embeddings.*",
+      "{re}.*SelfAttention\\[self\\]/matmul_1",
+      "{re}.*SelfAttention\\[self\\]/__add___0",
+      "{re}.*SelfOutput\\[output\\]/__add___0",
+      "{re}.*SelfOutput\\[output\\]/__add___0",
+      "{re}.*SelfOutput\\[output\\]/LayerNorm\\[LayerNorm\\]/layer_norm_0",
+      "{re}.*Output\\[output\\]/__add___0",
+      "{re}.*Output\\[output\\]/LayerNorm\\[LayerNorm\\]/layer_norm_0"
+    ]
+  }
+}
