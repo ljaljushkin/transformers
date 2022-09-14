@@ -1,13 +1,7 @@
 {
   "input_info": [
-      {
-          "sample_size": [1, 128],
-          "type": "long"
-      },
-      {
-          "sample_size": [1, 128],
-          "type": "long"
-      }
+    {"sample_size": [1, 128], "type": "long"},
+    {"sample_size": [1, 128],"type": "long"}
   ],
   "compression": {
     "algorithm": "quantization",
@@ -21,9 +15,16 @@
         "num_bn_adaptation_samples": 0
       }
     },
+    "scope_overrides": {
+      "activations": {
+        "{re}.*matmul_0": {
+          "mode": "symmetric"
+        }
+      }
+    },
     "ignored_scopes": [
       "{re}.*Embeddings.*",
-      "{re}.*__add___0",
+      "{re}.*__add___[0-1]",
       "{re}.*layer_norm_0",
       "{re}.*matmul_1"
     ]
