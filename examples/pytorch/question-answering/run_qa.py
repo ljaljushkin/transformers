@@ -42,6 +42,7 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+from transformers.trainer import get_eval_dataloader_for_init
 from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
@@ -558,6 +559,9 @@ def main():
 
     nncf_config = None
     if training_args.nncf_config is not None:
+        class SquadInitializingDataloader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), dataloader_output
         nncf_config = NNCFConfig.from_json(training_args.nncf_config)
         if nncf_config.get("log_dir") is None:
             nncf_config["log_dir"] = training_args.output_dir
@@ -565,14 +569,38 @@ def main():
             os.makedirs(nncf_config["log_dir"])
         if training_args.do_train:
             train_dataloader = get_train_dataloader_for_init(training_args, train_dataset, data_collator)
-            class SquadInitializingDataloader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), dataloader_output
-
             nncf_config.register_extra_structs([
                 QuantizationRangeInitArgs(SquadInitializingDataloader(train_dataloader)),
                 BNAdaptationInitArgs(SquadInitializingDataloader(train_dataloader)),
             ])
+        if training_args.do_eval:  # TODO: PTQ eval
+            orig_model = AutoModelForQuestionAnswering.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                use_auth_token=True if model_args.use_auth_token else None,
+                nncf_config=None,
+                nncf_eval=None
+            )
+
+            trainer = QuestionAnsweringTrainer(
+                model=orig_model,
+                args=training_args,
+                train_dataset=train_dataset if training_args.do_train else None,
+                eval_dataset=eval_dataset if training_args.do_eval else None,
+                eval_examples=eval_examples if training_args.do_eval else None,
+                tokenizer=tokenizer,
+                data_collator=data_collator,
+                post_process_function=post_processing_function,
+                compute_metrics=compute_metrics,
+                compression_ctrl=None
+            )
+            eval_dataloader = trainer.get_eval_dataloader(eval_dataset)
+            initializing_data_loader = SquadInitializingDataloader(eval_dataloader)
+            nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader),
+                                                BNAdaptationInitArgs(initializing_data_loader)])
 
     retval = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
@@ -638,7 +666,11 @@ def main():
     # Evaluation
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
+        import time
+        ts = time.time()
         metrics = trainer.evaluate()
+        te = time.time()
+        print('trainer.evaluate took {:2.4f} sec'.format(te - ts))
 
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))

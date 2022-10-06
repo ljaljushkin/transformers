@@ -1,0 +1,42 @@
+{
+    "input_info": [
+      {
+          "sample_size": [1, 128],
+          "type": "long"
+      },
+      {
+          "sample_size": [1, 128],
+          "type": "long"
+      },
+      {
+          "sample_size": [1, 128],
+          "type": "long"
+      }
+  ],
+  "compression": {
+    "algorithm": "quantization",
+    "preset": "mixed",
+    "initializer": {
+      "range": {
+        "num_init_samples": 300,
+        "type": "mean_min_max"
+      },
+      "batchnorm_adaptation": {
+        "num_bn_adaptation_samples": 0
+      }
+    },
+    "scope_overrides": {
+      "activations": {
+        "{re}.*matmul_0": {
+          "mode": "symmetric"
+        }
+      }
+    },
+    "ignored_scopes": [
+      "{re}.*Embeddings.*",
+      "{re}.*__add___0",
+      "{re}.*layer_norm_0",
+      "{re}.*matmul_1"
+    ]
+  }
+}
