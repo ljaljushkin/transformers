@@ -1361,7 +1361,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             if nncf_config is not None and nncf_eval:
                 # TODO: if eval in PTQ mode:
                 model.load_state_dict(state_dict, strict=False)
+                import time
+                ts = time.time()
                 compression_algo_controller, model = create_compressed_model(model, nncf_config)
+                te = time.time()
+                print('create_compressed_model took {:2.4f} sec'.format(te-ts))
                 # TODO: if eval of NNCF checkpoint
                 # compression_algo_controller, model = create_compressed_model(model, nncf_config,
                 #                                                              compression_state=state_dict)

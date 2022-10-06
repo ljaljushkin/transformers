@@ -594,7 +594,11 @@ def main():
             eval_datasets.append(raw_datasets["validation_mismatched"])
 
         for eval_dataset, task in zip(eval_datasets, tasks):
+            import time
+            ts = time.time()
             metrics = trainer.evaluate(eval_dataset=eval_dataset)
+            te = time.time()
+            print('trainer.evaluate took {:2.4f} sec'.format(te - ts))
 
             max_eval_samples = (
                 data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
