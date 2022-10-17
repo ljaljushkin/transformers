@@ -154,6 +154,7 @@ from .import_utils import (
 
 
 WEIGHTS_NAME = "pytorch_model.bin"
+NNCF_PT_STATE_NAME = "nncf_state.bin"
 WEIGHTS_INDEX_NAME = "pytorch_model.bin.index.json"
 TF2_WEIGHTS_NAME = "tf_model.h5"
 TF2_WEIGHTS_INDEX_NAME = "tf_model.h5.index.json"
