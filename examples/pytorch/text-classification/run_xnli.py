@@ -26,10 +26,16 @@ from typing import Optional
 
 import datasets
 import numpy as np
+import torch
 from datasets import load_dataset
 
 import evaluate
 import transformers
+from nncf import NNCFConfig
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.torch import register_default_init_args
+from nncf.torch.initialization import PTInitializingDataLoader
+
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
@@ -42,6 +48,7 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
@@ -282,15 +289,6 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-        ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
-    )
 
     # Preprocessing the datasets
     # Padding strategy
@@ -367,6 +365,56 @@ def main():
     else:
         data_collator = None
 
+    nncf_config = None
+    if training_args.nncf_config is not None:
+        nncf_config = NNCFConfig.from_json(training_args.nncf_config)
+
+        if nncf_config.get("log_dir") is None:
+            nncf_config["log_dir"] = training_args.output_dir
+
+        if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
+            os.makedirs(nncf_config["log_dir"])
+
+        if training_args.do_train:
+            train_dataloader = get_train_dataloader_for_init(training_args,
+                                                             train_dataset,
+                                                             data_collator=data_collator)
+
+            class KwargBasedInitializingDataloader(PTInitializingDataLoader):
+                def get_inputs(self, dataloader_output):
+                    return (), dataloader_output
+
+            initializing_data_loader = KwargBasedInitializingDataloader(train_dataloader)
+            nncf_config = register_default_init_args(nncf_config, initializing_data_loader)
+
+
+    retval = AutoModelForSequenceClassification.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+        nncf_config=nncf_config,
+        nncf_eval=nncf_config is not None and training_args.do_eval and not training_args.do_train
+    )
+
+    if nncf_config is None:
+        model = retval
+        compression_ctrl = None
+    else:
+        compression_ctrl, model = retval
+
+    if training_args.to_onnx:
+        # Expecting the following forward signature:
+        # (input_ids, attention_mask, token_type_ids, ...)
+        if nncf_config is not None:
+            compression_ctrl.export_model(training_args.to_onnx)
+        else:
+            model.to('cpu')
+            dummy_tensor = torch.ones([1, training_args.max_seq_length], dtype=torch.long)
+            torch.onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor), training_args.to_onnx)
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -376,7 +424,12 @@ def main():
         compute_metrics=compute_metrics,
         tokenizer=tokenizer,
         data_collator=data_collator,
+        compression_ctrl=compression_ctrl
     )
+
+    if nncf_config is not None:
+        if not (training_args.local_rank == -1 or training_args.no_cuda):
+            compression_ctrl.distributed()
 
     # Training
     if training_args.do_train:
