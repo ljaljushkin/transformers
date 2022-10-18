@@ -10,7 +10,7 @@
         "algorithm": "quantization",
         "initializer": {
             "range": {
-                "num_init_samples": 16,
+                "num_init_samples": 1,
                 "type": "percentile",
                 "params":
                 {
