@@ -652,7 +652,10 @@ class Trainer:
         self.current_flos = 0
         self.hp_search_backend = None
         self.use_tune_checkpoints = False
-        default_label_names = find_labels(self.model.__class__)
+        model_class = self.model.__class__
+        if isinstance(self.model, NNCFNetwork):
+            model_class = self.model.get_nncf_wrapped_model().__class__
+        default_label_names = find_labels(model_class)
         self.label_names = default_label_names if self.args.label_names is None else self.args.label_names
         self.control = self.callback_handler.on_init_end(self.args, self.state, self.control)
 
