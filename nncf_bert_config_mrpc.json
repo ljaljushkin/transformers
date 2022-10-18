@@ -26,7 +26,7 @@
                 }
             },
             "batchnorm_adaptation": {
-                "num_bn_adaptation_samples": 200
+                "num_bn_adaptation_samples": 0
             }
         },
         "activations":

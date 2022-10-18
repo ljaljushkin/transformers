@@ -17,6 +17,9 @@
                     "min_percentile": 0.01,
                     "max_percentile": 99.99
                 }
+            },
+            "batchnorm_adaptation": {
+                "num_bn_adaptation_samples": 0
             }
         },
         "ignored_scopes": [
