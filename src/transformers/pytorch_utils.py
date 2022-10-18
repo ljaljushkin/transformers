@@ -87,7 +87,8 @@ def prune_linear_layer(layer: nn.Linear, index: torch.LongTensor, dim: int = 0) 
         new_layer.bias.requires_grad = True
     return new_layer
 
-
+import nncf
+@nncf.torch.register_module()
 class Conv1D(nn.Module):
     """
     1D-convolutional layer as defined by Radford et al. for OpenAI GPT (and also used in GPT-2).

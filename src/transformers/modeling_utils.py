@@ -27,10 +27,12 @@ from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
+from nncf.torch import create_compressed_model
 from packaging import version
 from torch import Tensor, device, nn
 from torch.nn import CrossEntropyLoss
 
+from transformers.utils import NNCF_PT_STATE_NAME
 from transformers.utils.hub import convert_file_size_to_int, get_checkpoint_shard_files
 from transformers.utils.import_utils import is_sagemaker_mp_enabled
 
@@ -1497,6 +1499,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         push_to_hub: bool = False,
         max_shard_size: Union[int, str] = "10GB",
         safe_serialization: bool = False,
+        nncf_compression_state: Dict = None,
         **kwargs,
     ):
         """
@@ -1619,6 +1622,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 safe_save_file(shard, os.path.join(save_directory, shard_file), metadata={"format": "pt"})
             else:
                 save_function(shard, os.path.join(save_directory, shard_file))
+
+        if nncf_compression_state is not None:
+            nncf_state_output_file = os.path.join(save_directory, NNCF_PT_STATE_NAME)
+            save_function(nncf_compression_state, nncf_state_output_file)
 
         if index is None:
             logger.info(f"Model weights saved in {os.path.join(save_directory, WEIGHTS_NAME)}")
@@ -1901,6 +1908,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         load_in_8bit_skip_modules = kwargs.pop("load_in_8bit_skip_modules", None)
         subfolder = kwargs.pop("subfolder", "")
         commit_hash = kwargs.pop("_commit_hash", None)
+        nncf_config = kwargs.pop("nncf_config", None)
+        nncf_eval = kwargs.pop("nncf_eval", False)
 
         if trust_remote_code is True:
             logger.warning(
@@ -2321,6 +2330,11 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             if dtype_orig is not None:
                 torch.set_default_dtype(dtype_orig)
 
+            if nncf_config is not None and nncf_eval:
+                compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                                                                             compression_state=state_dict)
+                return compression_algo_controller, model
+
             model, missing_keys, unexpected_keys, mismatched_keys, error_msgs = cls._load_pretrained_model(
                 model,
                 state_dict,
@@ -2343,6 +2357,16 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
 
         # Set model in evaluation mode to deactivate DropOut modules by default
         model.eval()
+
+        if nncf_config is not None:
+            compression_state = None
+            compression_state_file = os.path.join(pretrained_model_name_or_path, NNCF_PT_STATE_NAME)
+            if os.path.isfile(compression_state_file):
+                compression_state = torch.load(compression_state_file)
+
+            compression_algo_controller, model = create_compressed_model(model, nncf_config,
+                                                                         compression_state=compression_state)
+            return compression_algo_controller, model
 
         # Dispatch model with hooks on all devices if necessary
         if device_map is not None:
