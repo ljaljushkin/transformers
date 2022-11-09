@@ -2718,9 +2718,12 @@ class Trainer:
             else:
                 is_pretrained = isinstance(unwrapped_model, PreTrainedModel)
             if is_pretrained:
+                compression_state = None
                 if state_dict is None:
                     state_dict = unwrapped_model.state_dict()
-                unwrapped_model.save_pretrained(output_dir, state_dict=state_dict)
+                if isinstance(unwrapped_model, NNCFNetwork):
+                    compression_state = self.compression_ctrl.get_compression_state()
+                unwrapped_model.save_pretrained(output_dir, state_dict=state_dict, nncf_compression_state=compression_state)
             else:
                 logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
                 if state_dict is None:

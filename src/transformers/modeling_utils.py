@@ -2331,8 +2331,16 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 torch.set_default_dtype(dtype_orig)
 
             if nncf_config is not None and nncf_eval:
+                compression_state = None
+                compression_state_file = os.path.join(pretrained_model_name_or_path, NNCF_PT_STATE_NAME)
+                if os.path.isfile(compression_state_file):
+                    compression_state = torch.load(compression_state_file)
                 compression_algo_controller, model = create_compressed_model(model, nncf_config,
-                                                                             compression_state=state_dict)
+                                                                             compression_state=compression_state)
+                # TODO: Nikolai: comment 3 lines to load state_dict via `_load_pretrained_model`
+                # `_load_pretrained_model` fails with NameError: free variable 'expected_keys_not_prefixed' referenced before assignment in enclosing scope
+                from nncf.torch.checkpoint_loading import load_state
+                load_state(model, state_dict, is_resume=True)
                 return compression_algo_controller, model
 
             model, missing_keys, unexpected_keys, mismatched_keys, error_msgs = cls._load_pretrained_model(
@@ -2351,6 +2359,9 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                 dtype=torch_dtype,
                 load_in_8bit=load_in_8bit,
             )
+            # TODO: Nikolai: uncomment when can load state_dict via `_load_pretrained_model`
+            # if nncf_config is not None and nncf_eval:
+            #     return compression_algo_controller, model
 
         # make sure token embedding weights are still tied if needed
         model.tie_weights()
@@ -2359,13 +2370,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         model.eval()
 
         if nncf_config is not None:
-            compression_state = None
-            compression_state_file = os.path.join(pretrained_model_name_or_path, NNCF_PT_STATE_NAME)
-            if os.path.isfile(compression_state_file):
-                compression_state = torch.load(compression_state_file)
-
-            compression_algo_controller, model = create_compressed_model(model, nncf_config,
-                                                                         compression_state=compression_state)
+            compression_algo_controller, model = create_compressed_model(model, nncf_config)
             return compression_algo_controller, model
 
         # Dispatch model with hooks on all devices if necessary
