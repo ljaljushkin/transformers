@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 from tqdm.auto import tqdm
-
+from nncf.torch.nncf_network import NNCFNetwork
 
 # Integrations must be imported before ML frameworks:
 from .integrations import (  # isort: split
@@ -55,6 +55,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from packaging import version
+from nncf.torch.compression_method_api import PTCompressionAlgorithmController
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -206,6 +208,30 @@ SCHEDULER_NAME = "scheduler.pt"
 SCALER_NAME = "scaler.pt"
 
 
+def get_train_dataloader_for_init(args, train_dataset, data_collator=None):
+    from torch.utils.data import RandomSampler
+    from torch.utils.data import DistributedSampler
+    train_sampler = (
+        RandomSampler(train_dataset)
+        if args.local_rank == -1
+        else DistributedSampler(train_dataset)
+    )
+
+    if data_collator is None:
+        from transformers.data.data_collator import default_data_collator
+        data_collator = default_data_collator
+
+    from torch.utils.data import DataLoader
+    data_loader = DataLoader(
+        train_dataset,
+        batch_size=args.train_batch_size,
+        sampler=train_sampler,
+        collate_fn=data_collator,
+        drop_last=args.dataloader_drop_last,
+    )
+    return data_loader
+
+
 class Trainer:
     """
     Trainer is a simple but feature-complete training and eval loop for PyTorch, optimized for 🤗 Transformers.
@@ -304,12 +330,15 @@ class Trainer:
         callbacks: Optional[List[TrainerCallback]] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         preprocess_logits_for_metrics: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
+        compression_ctrl: PTCompressionAlgorithmController = None
     ):
         if args is None:
             output_dir = "tmp_trainer"
             logger.info(f"No `TrainingArguments` passed, using `output_dir={output_dir}`.")
             args = TrainingArguments(output_dir=output_dir)
         self.args = args
+
+        self.compression_ctrl = compression_ctrl
         # Seed must be set before instantiating the model when using model
         enable_full_determinism(self.args.seed) if self.args.full_determinism else set_seed(self.args.seed)
         self.hp_name = None
@@ -623,7 +652,10 @@ class Trainer:
         self.current_flos = 0
         self.hp_search_backend = None
         self.use_tune_checkpoints = False
-        default_label_names = find_labels(self.model.__class__)
+        model_class = self.model.__class__
+        if isinstance(self.model, NNCFNetwork):
+            model_class = self.model.get_nncf_wrapped_model().__class__
+        default_label_names = find_labels(model_class)
         self.label_names = default_label_names if self.args.label_names is None else self.args.label_names
         self.control = self.callback_handler.on_init_end(self.args, self.state, self.control)
 
@@ -708,7 +740,10 @@ class Trainer:
     def _set_signature_columns_if_needed(self):
         if self._signature_columns is None:
             # Inspect model forward signature to keep only the arguments it accepts.
-            signature = inspect.signature(self.model.forward)
+            if isinstance(self.model, NNCFNetwork):
+                signature = inspect.signature(self.model.get_nncf_wrapped_model().forward)
+            else:
+                signature = inspect.signature(self.model.forward)
             self._signature_columns = list(signature.parameters.keys())
             # Labels may be named label or label_ids, the default data collator handles that.
             self._signature_columns += list(set(["label", "label_ids"] + self.label_names))
@@ -1409,6 +1444,8 @@ class Trainer:
 
             if self.args.ddp_bucket_cap_mb is not None:
                 kwargs["bucket_cap_mb"] = self.args.ddp_bucket_cap_mb
+            if self.compression_ctrl is not None:
+                self.compression_ctrl.distributed()
             model = nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[self.args.local_rank] if self.args._n_gpu != 0 else None,
@@ -1687,6 +1724,9 @@ class Trainer:
                     _ = list(train_dataloader.sampler)
 
         for epoch in range(epochs_trained, num_train_epochs):
+            if self.compression_ctrl is not None:
+                self.compression_ctrl.scheduler.epoch_step()
+                print(self.compression_ctrl.statistics().to_str())
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
             elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
@@ -1790,6 +1830,8 @@ class Trainer:
                             )
 
                     # Optimizer step
+                    if self.compression_ctrl is not None:
+                        self.compression_ctrl.scheduler.step()
                     optimizer_was_run = True
                     if self.deepspeed:
                         pass  # called outside the loop
@@ -1814,6 +1856,7 @@ class Trainer:
                     model.zero_grad()
                     self.state.global_step += 1
                     self.state.epoch = epoch + (step + 1) / steps_in_epoch
+                    self.state.curr_loss = tr_loss_step.cpu().detach().item()
                     self.control = self.callback_handler.on_step_end(args, self.state, self.control)
 
                     self._maybe_log_save_evaluate(tr_loss, model, trial, epoch, ignore_keys_for_eval)
@@ -2032,6 +2075,14 @@ class Trainer:
 
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             logs["learning_rate"] = self._get_learning_rate()
+
+            if self.compression_ctrl is not None:
+                logs["compression_loss"] = self.compression_ctrl.loss().item()
+                compression_stats = self.compression_ctrl.statistics()
+                for key, value in prepare_for_tensorboard(compression_stats).items():
+                    logs["compression/statistics/{0}".format(key)] = value
+                print(compression_stats.to_str())
+
 
             self._total_loss_scalar += tr_loss_scalar
             self._globalstep_last_logged = self.state.global_step
@@ -2492,6 +2543,10 @@ class Trainer:
             # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
             loss = loss / self.args.gradient_accumulation_steps
 
+        if self.compression_ctrl is not None:
+            compression_loss = self.compression_ctrl.loss()
+            loss += compression_loss
+
         if self.do_grad_scaling:
             self.scaler.scale(loss).backward()
         elif self.use_apex:
@@ -2657,10 +2712,15 @@ class Trainer:
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
         if not isinstance(self.model, PreTrainedModel):
-            if isinstance(unwrap_model(self.model), PreTrainedModel):
+            unwrapped_model = unwrap_model(self.model)
+            if isinstance(unwrapped_model, NNCFNetwork):
+                is_pretrained = isinstance(unwrapped_model.get_nncf_wrapped_model(), PreTrainedModel)
+            else:
+                is_pretrained = isinstance(unwrapped_model, PreTrainedModel)
+            if is_pretrained:
                 if state_dict is None:
-                    state_dict = self.model.state_dict()
-                unwrap_model(self.model).save_pretrained(output_dir, state_dict=state_dict)
+                    state_dict = unwrapped_model.state_dict()
+                unwrapped_model.save_pretrained(output_dir, state_dict=state_dict)
             else:
                 logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
                 if state_dict is None:

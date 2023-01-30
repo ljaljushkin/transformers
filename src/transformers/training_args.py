@@ -993,6 +993,12 @@ class TrainingArguments:
         },
     )
 
+    nncf_config: str = field(default=None,
+                             metadata={"help": "NNCF configuration .json file for compression-enabled training"})
+
+    to_onnx: str = field(default=None,
+                         metadata={"help": "Name of the ONNX model file to export the model to."})
+
     def __post_init__(self):
         # Handle --use_env option in torch.distributed.launch (local_rank not passed as an arg then).
         # This needs to happen before any call to self.device or self.n_gpu.
