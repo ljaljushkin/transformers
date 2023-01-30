@@ -18,44 +18,39 @@ Fine-tuning the library models for question answering.
 """
 # You can also adapt this script on your own question answering task. Pointers for this are left as comments.
 
+import datasets
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
-from typing import Optional
-
-import datasets
 import torch
-from datasets import load_dataset, load_metric
+from dataclasses import dataclass
+from dataclasses import field
+from datasets import load_dataset
+from datasets import load_metric
+from nncf import NNCFConfig
+from nncf.config.structures import BNAdaptationInitArgs
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.torch.initialization import PTInitializingDataLoader
+from torch import onnx
+from typing import Optional
 
 import transformers
 from trainer_qa import QuestionAnsweringTrainer
-from transformers import (
-    AutoConfig,
-    AutoModelForQuestionAnswering,
-    AutoTokenizer,
-    DataCollatorWithPadding,
-    EvalPrediction,
-    HfArgumentParser,
-    PreTrainedTokenizerFast,
-    TrainingArguments,
-    default_data_collator,
-    set_seed,
-)
-from transformers.trainer import get_eval_dataloader_for_init
+from transformers import AutoConfig
+from transformers import AutoModelForQuestionAnswering
+from transformers import AutoTokenizer
+from transformers import DataCollatorWithPadding
+from transformers import EvalPrediction
+from transformers import HfArgumentParser
+from transformers import PreTrainedTokenizerFast
+from transformers import TrainingArguments
+from transformers import default_data_collator
+from transformers import set_seed
 from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 from utils_qa import postprocess_qa_predictions
-
-from torch import onnx
-
-from nncf import NNCFConfig
-from nncf.torch.initialization import PTInitializingDataLoader
-from nncf.config.structures import BNAdaptationInitArgs
-from nncf.config.structures import QuantizationRangeInitArgs
-from nncf.common.utils.tensorboard import prepare_for_tensorboard
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.9.0")
@@ -92,7 +87,7 @@ class ModelArguments:
         default=False,
         metadata={
             "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
-            "with private models)."
+                    "with private models)."
         },
     )
 
@@ -129,36 +124,36 @@ class DataTrainingArguments:
         default=384,
         metadata={
             "help": "The maximum total input sequence length after tokenization. Sequences longer "
-            "than this will be truncated, sequences shorter will be padded."
+                    "than this will be truncated, sequences shorter will be padded."
         },
     )
     pad_to_max_length: bool = field(
         default=True,
         metadata={
             "help": "Whether to pad all samples to `max_seq_length`. "
-            "If False, will pad the samples dynamically when batching to the maximum length in the batch (which can "
-            "be faster on GPU but will be slower on TPU)."
+                    "If False, will pad the samples dynamically when batching to the maximum length in the batch (which can "
+                    "be faster on GPU but will be slower on TPU)."
         },
     )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
-            "value if set."
+                    "value if set."
         },
     )
     max_eval_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-            "value if set."
+                    "value if set."
         },
     )
     max_predict_samples: Optional[int] = field(
         default=None,
         metadata={
             "help": "For debugging purposes or quicker training, truncate the number of prediction examples to this "
-            "value if set."
+                    "value if set."
         },
     )
     version_2_with_negative: bool = field(
@@ -168,8 +163,8 @@ class DataTrainingArguments:
         default=0.0,
         metadata={
             "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
-            "the score of the null answer minus this threshold, the null answer is selected for this example. "
-            "Only useful when `version_2_with_negative=True`."
+                    "the score of the null answer minus this threshold, the null answer is selected for this example. "
+                    "Only useful when `version_2_with_negative=True`."
         },
     )
     doc_stride: int = field(
@@ -184,16 +179,16 @@ class DataTrainingArguments:
         default=30,
         metadata={
             "help": "The maximum length of an answer that can be generated. This is needed because the start "
-            "and end predictions are not conditioned on one another."
+                    "and end predictions are not conditioned on one another."
         },
     )
 
     def __post_init__(self):
         if (
-            self.dataset_name is None
-            and self.train_file is None
-            and self.validation_file is None
-            and self.test_file is None
+                self.dataset_name is None
+                and self.train_file is None
+                and self.validation_file is None
+                and self.test_file is None
         ):
             raise ValueError("Need either a dataset name or a training/validation file/test_file.")
         else:
@@ -562,6 +557,7 @@ def main():
         class SquadInitializingDataloader(PTInitializingDataLoader):
             def get_inputs(self, dataloader_output):
                 return (), dataloader_output
+
         nncf_config = NNCFConfig.from_json(training_args.nncf_config)
         if nncf_config.get("log_dir") is None:
             nncf_config["log_dir"] = training_args.output_dir
@@ -619,11 +615,25 @@ def main():
     else:
         compression_ctrl, model = retval
 
+    statistics = compression_ctrl.statistics()
+    print(statistics.to_str())
+
     if training_args.to_onnx:
-    # Expecting the following forward signature:
-    # (input_ids, attention_mask, token_type_ids, ...)
+        # Expecting the following forward signature:
+        # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            compression_ctrl.export_model(
+                training_args.to_onnx,
+                input_names=['input_ids', 'attention_mask', 'token_type_ids'],
+                output_names=['start_logits', 'end_logits'],
+                save_format="onnx_11"
+                # dynamic_axes={
+                #     'input_ids': {0: 'batch', 1: 'sequence'},
+                #     'attention_mask': {0: 'batch', 1: 'sequence'},
+                #     'token_type_ids': {0: 'batch', 1: 'sequence'},
+                #     'start_logits': {0: 'batch', 1: 'sequence'},
+                #     'end_logits': {0: 'batch', 1: 'sequence'}}
+            )
         else:
             model.to('cpu')
             dummy_tensor = torch.ones([1, 384], dtype=torch.long)
