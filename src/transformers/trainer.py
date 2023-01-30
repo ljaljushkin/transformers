@@ -231,6 +231,203 @@ def get_train_dataloader_for_init(args, train_dataset, data_collator=None):
     )
     return data_loader
 
+import torch
+from torch.utils.data.dataset import Dataset
+# TODO: copy-paste from Trainer
+def _get_eval_sampler(training_args, eval_dataset: Dataset) -> Optional[torch.utils.data.sampler.Sampler]:
+    from transformers.file_utils import (
+        is_sagemaker_mp_enabled,
+        is_torch_tpu_available,
+    )
+
+    if is_torch_tpu_available():
+        import torch_xla.core.xla_model as xm
+
+    if is_sagemaker_mp_enabled():
+        import smdistributed.modelparallel.torch as smp
+
+    from torch.utils.data.sampler import SequentialSampler
+
+    from transformers.file_utils import (
+        is_sagemaker_mp_enabled,
+        is_torch_tpu_available,
+    )
+    from transformers.trainer_pt_utils import (
+        SequentialDistributedSampler,
+        ShardSampler,
+    )
+
+    # Deprecated code
+    if training_args.use_legacy_prediction_loop:
+        if is_torch_tpu_available():
+            return SequentialDistributedSampler(
+                eval_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal()
+            )
+        elif is_sagemaker_mp_enabled():
+            return SequentialDistributedSampler(
+                eval_dataset,
+                num_replicas=smp.dp_size(),
+                rank=smp.dp_rank(),
+                batch_size=training_args.per_device_eval_batch_size,
+            )
+        elif training_args.local_rank != -1:
+            return SequentialDistributedSampler(eval_dataset)
+        else:
+            return SequentialSampler(eval_dataset)
+
+    if training_args.world_size <= 1:
+        return SequentialSampler(eval_dataset)
+    else:
+        return ShardSampler(
+            eval_dataset,
+            batch_size=training_args.per_device_eval_batch_size,
+            num_processes=training_args.world_size,
+            process_index=training_args.process_index,
+        )
+
+# TODO: need to run this before model creation, but it requires model
+# def _remove_unused_columns(training_args, dataset: "datasets.Dataset", description: Optional[str] = None):
+#     import inspect
+#     import sys
+#     from logging import StreamHandler
+#
+#     from nncf.torch.nncf_network import NNCFNetwork
+#
+#     # Integrations must be imported before ML frameworks:
+#     from transformers.integrations import (  # isort: split
+#         is_fairscale_available,
+#     )
+#
+#     import torch
+#     from packaging import version
+#
+#     from transformers.dependency_versions_check import dep_version_check
+#     from transformers.file_utils import (
+#         is_datasets_available,
+#         is_in_notebook,
+#         is_sagemaker_dp_enabled,
+#         is_sagemaker_mp_enabled,
+#         is_torch_tpu_available,
+#         is_training_run_on_sagemaker,
+#     )
+#     from transformers.utils import logging
+#
+#     _is_torch_generator_available = False
+#     _is_native_amp_available = False
+#
+#
+#     if version.parse(torch.__version__) >= version.parse("1.6"):
+#         _is_torch_generator_available = True
+#         _is_native_amp_available = True
+#
+#     if is_datasets_available():
+#         import datasets
+#
+#     if is_torch_tpu_available():
+#         import torch_xla.core.xla_model as xm
+#
+#     if is_fairscale_available():
+#         dep_version_check("fairscale")
+#
+#     if is_sagemaker_dp_enabled():
+#         import smdistributed.dataparallel.torch.distributed as dist
+#     else:
+#         import torch.distributed as dist
+#
+#     if is_sagemaker_mp_enabled():
+#         import smdistributed.modelparallel.torch as smp
+#
+#     if is_training_run_on_sagemaker():
+#         logging.add_handler(StreamHandler(sys.stdout))
+#
+#
+#     if not training_args.remove_unused_columns:
+#         return dataset
+#     if self._signature_columns is None:
+#         # Inspect model forward signature to keep only the arguments it accepts.
+#         if isinstance(self.model, NNCFNetwork):
+#             signature = inspect.signature(self.model.get_nncf_wrapped_model().forward)
+#         else:
+#             signature = inspect.signature(self.model.forward)
+#         self._signature_columns = list(signature.parameters.keys())
+#         # Labels may be named label or label_ids, the default data collator handles that.
+#         self._signature_columns += ["label", "label_ids"]
+#     columns = [k for k in self._signature_columns if k in dataset.column_names]
+#     ignored_columns = list(set(dataset.column_names) - set(self._signature_columns))
+#     if len(ignored_columns) > 0:
+#         dset_description = "" if description is None else f"in the {description} set "
+#         logger.info(
+#             f"The following columns {dset_description} don't have a corresponding argument in "
+#             f"`{self.model.__class__.__name__}.forward` and have been ignored: {', '.join(ignored_columns)}."
+#         )
+#
+#     if version.parse(datasets.__version__) < version.parse("1.4.0"):
+#         dataset.set_format(
+#             type=dataset.format["type"], columns=columns, format_kwargs=dataset.format["format_kwargs"]
+#         )
+#         return dataset
+#     else:
+#         return dataset.remove_columns(ignored_columns)
+
+# TODO: copy-paste from Trainer
+def get_eval_dataloader_for_init(eval_dataset, training_args, data_collator=None):
+    """
+    Returns the evaluation :class:`~torch.utils.data.DataLoader`.
+
+    Subclass and override this method if you want to inject some custom behavior.
+
+    Args:
+        eval_dataset (:obj:`torch.utils.data.dataset.Dataset`, `optional`):
+            If provided, will override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`, columns not
+            accepted by the ``model.forward()`` method are automatically removed. It must implement :obj:`__len__`.
+    """
+    from transformers.trainer_pt_utils import IterableDatasetShard
+    from torch.utils.data.dataloader import DataLoader
+    # from transformers.file_utils import is_datasets_available
+    import torch
+
+    if eval_dataset is None and eval_dataset is None:
+        raise ValueError("Trainer: evaluation requires an eval_dataset.")
+    eval_dataset = eval_dataset if eval_dataset is not None else eval_dataset
+
+    # TODO: need to run this before model creation, but it requires model
+    # if is_datasets_available() and isinstance(eval_dataset, datasets.Dataset):
+    #     eval_dataset = _remove_unused_columns(eval_dataset, description="evaluation")
+
+    if isinstance(eval_dataset, torch.utils.data.dataset.IterableDataset):
+        if training_args.world_size > 1:
+
+            eval_dataset = IterableDatasetShard(
+                eval_dataset,
+                batch_size=training_args.eval_batch_size,
+                drop_last=training_args.dataloader_drop_last,
+                num_processes=training_args.world_size,
+                process_index=training_args.process_index,
+            )
+
+        if data_collator is None:
+            from transformers.data.data_collator import default_data_collator
+            data_collator = default_data_collator
+
+        return DataLoader(
+            eval_dataset,
+            batch_size=training_args.eval_batch_size,
+            collate_fn=data_collator,
+            num_workers=training_args.dataloader_num_workers,
+            pin_memory=training_args.dataloader_pin_memory,
+        )
+
+    eval_sampler = _get_eval_sampler(training_args, eval_dataset)
+
+    return DataLoader(
+        eval_dataset,
+        sampler=eval_sampler,
+        batch_size=training_args.eval_batch_size,
+        collate_fn=data_collator,
+        drop_last=training_args.dataloader_drop_last,
+        num_workers=training_args.dataloader_num_workers,
+        pin_memory=training_args.dataloader_pin_memory,
+    )
 
 class Trainer:
     """

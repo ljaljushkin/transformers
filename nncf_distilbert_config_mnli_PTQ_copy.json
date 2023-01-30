@@ -1,0 +1,117 @@
+{
+  "return_dict": true,
+  "output_hidden_states": false,
+  "output_attentions": false,
+  "torchscript": false,
+  "torch_dtype": null,
+  "use_bfloat16": false,
+  "tf_legacy_loss": false,
+  "pruned_heads": {},
+  "tie_word_embeddings": true,
+  "is_encoder_decoder": false,
+  "is_decoder": false,
+  "cross_attention_hidden_size": null,
+  "add_cross_attention": false,
+  "tie_encoder_decoder": false,
+  "max_length": 20,
+  "min_length": 0,
+  "do_sample": false,
+  "early_stopping": false,
+  "num_beams": 1,
+  "num_beam_groups": 1,
+  "diversity_penalty": 0.0,
+  "temperature": 1.0,
+  "top_k": 50,
+  "top_p": 1.0,
+  "typical_p": 1.0,
+  "repetition_penalty": 1.0,
+  "length_penalty": 1.0,
+  "no_repeat_ngram_size": 0,
+  "encoder_no_repeat_ngram_size": 0,
+  "bad_words_ids": null,
+  "num_return_sequences": 1,
+  "chunk_size_feed_forward": 0,
+  "output_scores": false,
+  "return_dict_in_generate": false,
+  "forced_bos_token_id": null,
+  "forced_eos_token_id": null,
+  "remove_invalid_values": false,
+  "exponential_decay_length_penalty": null,
+  "suppress_tokens": null,
+  "begin_suppress_tokens": null,
+  "architectures": null,
+  "finetuning_task": null,
+  "id2label": {
+    "0": "LABEL_0",
+    "1": "LABEL_1"
+  },
+  "label2id": {
+    "LABEL_0": 0,
+    "LABEL_1": 1
+  },
+  "tokenizer_class": null,
+  "prefix": null,
+  "bos_token_id": null,
+  "pad_token_id": null,
+  "eos_token_id": null,
+  "sep_token_id": null,
+  "decoder_start_token_id": null,
+  "task_specific_params": null,
+  "problem_type": null,
+  "_name_or_path": "",
+  "_commit_hash": null,
+  "transformers_version": null,
+  "compression": {
+    "algorithm": "quantization",
+    "initializer": {
+      "range": {
+        "num_init_samples": 32,
+        "type": "percentile",
+        "params": {
+          "min_percentile": 0.01,
+          "max_percentile": 99.99
+        }
+      },
+      "batchnorm_adaptation": {
+        "num_bn_adaptation_samples": 0
+      }
+    },
+    "activations": {
+      "mode": "symmetric"
+    },
+    "weights": {
+      "mode": "symmetric",
+      "signed": true,
+      "per_channel": false
+    },
+    "export_to_onnx_standard_ops": true
+  },
+  "input_info": [
+    {
+      "sample_size": [
+        2,
+        512
+      ],
+      "type": "long",
+      "keyword": "input_ids"
+    },
+    {
+      "sample_size": [
+        2,
+        512
+      ],
+      "type": "long",
+      "keyword": "token_type_ids"
+    },
+    {
+      "sample_size": [
+        2,
+        512
+      ],
+      "type": "long",
+      "keyword": "attention_mask"
+    }
+  ],
+  "save_onnx_model": true,
+  "optimum_version": null
+}
