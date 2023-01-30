@@ -45,6 +45,7 @@ from transformers import (
     default_data_collator,
     set_seed,
 )
+from transformers.trainer import get_eval_dataloader_for_init
 from transformers.trainer import get_train_dataloader_for_init
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version
@@ -411,7 +412,23 @@ def main():
         if data_args.max_train_samples is not None:
             train_dataset = train_dataset.select(range(data_args.max_train_samples))
 
+    # Data collator will default to DataCollatorWithPadding, so we change it if we already did the padding.
+    if data_args.pad_to_max_length:
+        data_collator = default_data_collator
+    elif training_args.fp16:
+        data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
+    else:
+        data_collator = None
+
     nncf_config = None
+
+    if training_args.do_eval:
+        if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
+            raise ValueError("--do_eval requires a validation dataset")
+        eval_dataset = raw_datasets["validation_matched" if data_args.task_name == "mnli" else "validation"]
+        if data_args.max_eval_samples is not None:
+            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+
     if training_args.nncf_config is not None:
         nncf_config = NNCFConfig.from_json(training_args.nncf_config)
 
@@ -421,46 +438,50 @@ def main():
         if not os.path.exists(training_args.output_dir) and training_args.local_rank in [-1, 0]:
             os.makedirs(nncf_config["log_dir"])
 
+        class SST2InitializingDataLoader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), {
+                    "labels": dataloader_output["labels"],
+                    "attention_mask": dataloader_output["attention_mask"],
+                    "input_ids": dataloader_output["input_ids"]
+                }
+
+        class MRPCInitializingDataLoader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), {
+                    "labels": dataloader_output["labels"],
+                    "attention_mask": dataloader_output["attention_mask"],
+                    "input_ids": dataloader_output["input_ids"],
+                    "token_type_ids": dataloader_output["token_type_ids"]
+                }
+
+        class MNLIInitializingDataLoader(PTInitializingDataLoader):
+            def get_inputs(self, dataloader_output):
+                return (), {
+                    "labels": dataloader_output["labels"],
+                    "attention_mask": dataloader_output["attention_mask"],
+                    "input_ids": dataloader_output["input_ids"]
+                }
+
+        if data_args.task_name == "sst2":
+            initializing_data_loader_cls = SST2InitializingDataLoader
+        elif data_args.task_name == "mrpc":
+            initializing_data_loader_cls = MRPCInitializingDataLoader
+        elif data_args.task_name == "mnli":
+            initializing_data_loader_cls = MNLIInitializingDataLoader
+
         if training_args.do_train:
             train_dataloader = get_train_dataloader_for_init(training_args,
                                                              train_dataset,
                                                              data_collator=default_data_collator)
-
-            class SST2InitializingDataLoader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), {
-                        "labels": dataloader_output["labels"],
-                        "attention_mask": dataloader_output["attention_mask"],
-                        "input_ids": dataloader_output["input_ids"]
-                    }
-
-            class MRPCInitializingDataLoader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), {
-                        "labels": dataloader_output["labels"],
-                        "attention_mask": dataloader_output["attention_mask"],
-                        "input_ids": dataloader_output["input_ids"],
-                        "token_type_ids": dataloader_output["token_type_ids"]
-                    }
-
-            class MNLIInitializingDataLoader(PTInitializingDataLoader):
-                def get_inputs(self, dataloader_output):
-                    return (), {
-                        "labels": dataloader_output["labels"],
-                        "attention_mask": dataloader_output["attention_mask"],
-                        "input_ids": dataloader_output["input_ids"]
-                    }
-
-            if data_args.task_name == "sst2":
-                initializing_data_loader_cls = SST2InitializingDataLoader
-            elif data_args.task_name == "mrpc":
-                initializing_data_loader_cls = MRPCInitializingDataLoader
-            elif data_args.task_name == "mnli":
-                initializing_data_loader_cls = MNLIInitializingDataLoader
             initializing_data_loader = initializing_data_loader_cls(train_dataloader)
             nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader),
                                                 BNAdaptationInitArgs(initializing_data_loader)])
-
+        if training_args.do_eval:  # TODO: PTQ eval
+            eval_dataloader = get_eval_dataloader_for_init(eval_dataset, training_args, data_collator)
+            initializing_data_loader = initializing_data_loader_cls(eval_dataloader)
+            nncf_config.register_extra_structs([QuantizationRangeInitArgs(initializing_data_loader),
+                                                BNAdaptationInitArgs(initializing_data_loader)])
 
     retval = AutoModelForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
@@ -483,21 +504,14 @@ def main():
     # Expecting the following forward signature:
     # (input_ids, attention_mask, token_type_ids, ...)
         if nncf_config is not None:
-            compression_ctrl.export_model(training_args.to_onnx)
+            compression_ctrl.export_model(training_args.to_onnx, save_format='onnx_11')
         else:
             model.to('cpu')
             import torch
             from torch import onnx
             dummy_tensor = torch.ones([1, 128], dtype=torch.long)
-            onnx.export(model, (dummy_tensor, dummy_tensor, dummy_tensor),
-                        training_args.to_onnx, opset_version=10)
-
-    if training_args.do_eval:
-        if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
-            raise ValueError("--do_eval requires a validation dataset")
-        eval_dataset = raw_datasets["validation_matched" if data_args.task_name == "mnli" else "validation"]
-        if data_args.max_eval_samples is not None:
-            eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+            onnx.export(model, (dummy_tensor, dummy_tensor),
+                        training_args.to_onnx, opset_version=11)
 
     if training_args.do_predict or data_args.task_name is not None or data_args.test_file is not None:
         if "test" not in raw_datasets and "test_matched" not in raw_datasets:
@@ -531,14 +545,6 @@ def main():
             return {"mse": ((preds - p.label_ids) ** 2).mean().item()}
         else:
             return {"accuracy": (preds == p.label_ids).astype(np.float32).mean().item()}
-
-    # Data collator will default to DataCollatorWithPadding, so we change it if we already did the padding.
-    if data_args.pad_to_max_length:
-        data_collator = default_data_collator
-    elif training_args.fp16:
-        data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
-    else:
-        data_collator = None
 
     # Initialize our Trainer
     trainer = Trainer(
@@ -588,7 +594,11 @@ def main():
             eval_datasets.append(raw_datasets["validation_mismatched"])
 
         for eval_dataset, task in zip(eval_datasets, tasks):
+            import time
+            ts = time.time()
             metrics = trainer.evaluate(eval_dataset=eval_dataset)
+            te = time.time()
+            print('trainer.evaluate took {:2.4f} sec'.format(te - ts))
 
             max_eval_samples = (
                 data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
