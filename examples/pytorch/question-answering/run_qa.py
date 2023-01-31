@@ -24,6 +24,7 @@ import os
 import sys
 import torch
 from datasets import load_dataset
+from typing import Optional
 
 import evaluate
 import transformers
@@ -43,6 +44,15 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from utils_qa import postprocess_qa_predictions
+from dataclasses import dataclass, field
+
+from torch import onnx
+
+from nncf import NNCFConfig
+from nncf.torch.initialization import PTInitializingDataLoader
+from nncf.config.structures import BNAdaptationInitArgs
+from nncf.config.structures import QuantizationRangeInitArgs
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.23.0")
@@ -661,7 +671,7 @@ def main():
                 training_args.to_onnx,
                 input_names=['input_ids', 'attention_mask', 'token_type_ids'],
                 output_names=['start_logits', 'end_logits'],
-                save_format="onnx_11"
+                save_format="onnx_13"
                 # dynamic_axes={
                 #     'input_ids': {0: 'batch', 1: 'sequence'},
                 #     'attention_mask': {0: 'batch', 1: 'sequence'},
