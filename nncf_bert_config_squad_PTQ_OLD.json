@@ -45,5 +45,6 @@
       "signed": true,
       "per_channel": false
     },
+    "export_to_onnx_standard_ops": true
   }
 }

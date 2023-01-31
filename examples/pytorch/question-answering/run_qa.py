@@ -27,6 +27,8 @@ from datasets import load_dataset
 from typing import Optional
 
 import evaluate
+from nncf.torch.utils import get_all_modules_by_type
+
 import transformers
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import AutoConfig
@@ -659,6 +661,14 @@ def main():
         compression_ctrl = None
     else:
         compression_ctrl, model = retval
+
+    sym = get_all_modules_by_type(model, 'SymmetricQuantizer')
+    total_min = min(next(iter(sym.values())).scale)
+    for n, q in sym.items():
+        current_min = min(q.scale)
+        print(f"scale={current_min} {n}")
+        total_min = min(current_min, total_min)
+    print(f"total_min={total_min}")
 
     statistics = compression_ctrl.statistics()
     print(statistics.to_str())
